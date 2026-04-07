@@ -1,197 +1,84 @@
-# CLAUDE SUITE - 入金消込・督促管理機能 セットアップガイド
-
-## 概要
-
-本機能は「デジタル化・AI導入補助金2026」インボイス対応類型における  
-**「決済機能」（共P-02：商品売買に伴う金銭の授受による債権債務管理業務の負担を解消させる機能）**  
-の登録要件を満たすために実装しました。
+# CLAUDE SUITE
+## 統合業務管理システム（デジタル化・AI導入補助金2026 対応）
 
 ---
 
-## 追加ファイル一覧
+## 補助金対応プロセス一覧
 
-```
-database/
-  migrations/
-    2026_01_01_000001_create_payment_receipts_table.php  # 入金・消込・督促テーブル
-    2026_01_01_000002_add_receivable_columns_to_invoices.php  # invoicesテーブル拡張
+### インボイス対応類型：2機能対応
+| 機能 | 根拠 | 実装箇所 |
+|------|------|---------|
+| **受発注機能** | 登録要領P.11(イ)：適格請求書①〜⑥全要件・電磁的保存 | `app/invoices/` |
+| **決済機能** | 登録要領P.11(ウ)：商品売買に伴う債権債務管理業務の負担解消 | `app/payments/` `app/dunning/` |
 
-  seeders/
-    DunningScheduleSeeder.php  # 督促スケジュール初期データ
+### 通常枠：4プロセス対応
+| プロセス | 機能 | 実装箇所 |
+|---------|------|---------|
+| **共P-01** | 顧客管理（CRM）・商談管理（SFA） | `app/customers/` `app/deals/` |
+| **共P-02** | 請求管理・入金消込・督促・債権管理 | `app/invoices/` `app/payments/` `app/dunning/` |
+| **共P-04** | 資金繰り計画・管理会計・経営分析 | `app/analytics/` |
+| **共P-05** | ワークフロー承認・社内統制 | `app/workflow/` |
 
-app/
-  Services/
-    PaymentMatchingService.php  # 入金消込ビジネスロジック
-    DunningService.php          # 督促管理ビジネスロジック
+---
 
-  Http/
-    Controllers/
-      PaymentReceiptController.php  # 入金消込コントローラー
-      DunningController.php         # 督促管理コントローラー
-    Requests/
-      PaymentReceiptRequest.php     # 入金バリデーション
-      DunningRequest.php            # 督促バリデーション
-
-  Models/
-    PaymentReceipt.php          # 入金記録モデル
-    ReceivableMatching.php      # 消込記録モデル
-    DunningRecord.php           # 督促記録モデル
-    DunningSchedule.php         # 督促スケジュールモデル
-    InvoiceReceivableTrait.php  # Invoice拡張Trait
-
-  Console/
-    Commands/
-      DailyReceivableCommand.php  # 日次バッチコマンド
-
-  Notifications/
-    DunningNotification.php     # 督促メール通知
-
-resources/views/payments/
-  index.blade.php              # 入金消込ダッシュボード
-  dunning/
-    index.blade.php            # 督促管理一覧
-    schedules.blade.php        # 督促スケジュール設定
-
-routes/
-  payment_routes.php           # ルート定義
-```
+## 技術スタック
+- **フロントエンド**: Next.js 14 (App Router) + TypeScript + Tailwind CSS
+- **データベース**: Supabase (PostgreSQL)
+- **デプロイ**: Vercel
 
 ---
 
 ## セットアップ手順
 
-### 1. ファイルをリポジトリに配置
+### 1. Supabaseプロジェクトの作成
+1. https://supabase.com にアクセス
+2. 「New project」でプロジェクト作成
+3. `database/schema.sql` の内容を **SQL Editor** で実行
 
+### 2. 環境変数の設定
 ```bash
-git clone https://github.com/umaumauma8888/IThojokin202601.git
-cd IThojokin202601
-# 上記ファイルを各ディレクトリに配置
+cp .env.local.example .env.local
 ```
+`.env.local` を開いて以下を設定：
+```
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+```
+（Supabaseダッシュボード > Settings > API から取得）
 
-### 2. マイグレーション実行
-
+### 3. ローカル起動
 ```bash
-php artisan migrate
+npm install
+npm run dev
 ```
+http://localhost:3000 にアクセス
 
-### 3. 初期データの投入（督促スケジュール）
-
+### 4. Vercelデプロイ
 ```bash
-php artisan db:seed --class=DunningScheduleSeeder
+# Vercelに環境変数を設定
+vercel env add NEXT_PUBLIC_SUPABASE_URL
+vercel env add NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+# デプロイ
+vercel --prod
 ```
 
-### 4. routes/web.php に追加
-
-```php
-// routes/web.php の末尾に追加
-require __DIR__.'/payment_routes.php';
-```
-
-### 5. Invoice モデルに Trait を追加
-
-```php
-// app/Models/Invoice.php
-use App\Models\InvoiceReceivableTrait;
-
-class Invoice extends Model
-{
-    use InvoiceReceivableTrait; // ← 追加
-
-    // 既存のコード...
-
-    // $fillable に以下を追加
-    protected $fillable = [
-        // 既存のカラム...,
-        'receivable_balance',
-        'total_received',
-        'collection_status',
-        'overdue_date',
-        'overdue_days',
-        'last_dunning_at',
-    ];
-}
-```
-
-### 6. Kernel.php にスケジューラーとコマンドを登録
-
-```php
-// app/Console/Kernel.php
-
-protected $commands = [
-    \App\Console\Commands\DailyReceivableCommand::class,
-];
-
-protected function schedule(Schedule $schedule): void
-{
-    $schedule->command('receivable:daily')
-             ->dailyAt('07:00')
-             ->withoutOverlapping()
-             ->runInBackground();
-}
-```
-
-### 7. サーバー側 cron の設定
-
-```bash
-# crontab -e で以下を追加
-* * * * * cd /path/to/project && php artisan schedule:run >> /dev/null 2>&1
-```
-
-### 8. 既存の請求書データの売掛残高を初期化
-
-```bash
-# 既存データの receivable_balance を total_amount で初期化（未入金前提）
-php artisan tinker
->>> App\Models\Invoice::whereNull('receivable_balance')->update(['receivable_balance' => \DB::raw('total_amount'), 'total_received' => 0]);
-```
+または GitHub連携で自動デプロイ：
+1. Vercelダッシュボード > 「Add New Project」
+2. GitHubリポジトリを選択
+3. Environment Variables に上記2つを設定
+4. 「Deploy」
 
 ---
 
-## 動作確認
-
-```bash
-# 日次バッチのドライラン（実際には実行しない）
-php artisan receivable:daily --dry-run
-
-# 実際に実行
-php artisan receivable:daily
-```
-
-ブラウザで `/payments` にアクセスして入金消込ダッシュボードを確認してください。
-
----
-
-## 補助金登録申請における根拠
-
-本機能は以下の要件を満たします：
-
-**登録要領P.11(ウ)「決済機能」の定義②：**
-> 「共P-02に含まれる商品売買に伴う金銭の授受による **債権債務管理業務の負担を解消** させる機能」
-
-| 要件 | 対応機能 |
-|------|---------|
-| 入金消込の自動化 | `PaymentMatchingService::recordAndMatch()` |
-| 売掛残高リアルタイム管理 | `invoices.receivable_balance` 自動更新 |
-| 入金予定日管理 | 請求書の `due_date` × 入金ステータス管理 |
-| 支払督促・リマインド | `DunningService::processAutoDunning()` |
-| 督促履歴管理 | `dunning_records` テーブル |
-| 回収率の可視化 | `PaymentMatchingService::getReceivableSummary()` |
-
----
-
-## コミット・プッシュ
-
-```bash
-git add .
-git commit -m "feat: 入金消込・督促管理機能を追加
-
-- 入金登録と売掛金自動消込（PaymentMatchingService）
-- 期日超過の自動検知・ステータス更新
-- 督促メール自動送信（日次バッチ: receivable:daily）
-- 督促履歴・結果管理
-- 入金消込ダッシュボード・督促管理画面
-
-インボイス対応類型「決済機能」(登録要領P.11(ウ))対応"
-
-git push origin main
-```
+## 画面一覧
+| URL | 画面名 | プロセス |
+|-----|--------|---------|
+| `/dashboard`  | ダッシュボード | 全体 |
+| `/customers`  | 顧客管理（CRM） | 共P-01 |
+| `/deals`      | 商談管理（SFA） | 共P-01 |
+| `/invoices`   | 請求書管理（インボイス対応） | 共P-02 |
+| `/payments`   | 入金消込・債権管理 | 共P-02 |
+| `/dunning`    | 督促管理 | 共P-02 |
+| `/workflow`   | ワークフロー承認 | 共P-05 |
+| `/analytics`  | 経営分析・資金繰り計画 | 共P-04 |
